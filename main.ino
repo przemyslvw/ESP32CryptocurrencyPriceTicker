@@ -9,7 +9,7 @@
 
 // API settings
 const char* api_url_main = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,dogecoin,pepe,cardano,avalanche,mew&vs_currencies=usd&include_24hr_change=true";
-const char* api_url_details_template = "https://api.coingecko.com/api/v3/coins/"; // Dodamy ID kryptowaluty
+const char* api_url_details_template = "https://api.coingecko.com/api/v3/coins/"; // ID kryptowaluty dopełnione dynamicznie
 
 // TFT display
 TFT_eSPI tft = TFT_eSPI();
@@ -48,24 +48,56 @@ String fetchCryptoData(const char* url) {
   return "";
 }
 
+// Funkcja rysująca wykres liniowy
+void drawLineGraph(float data[], int dataCount, int x, int y, int width, int height) {
+  float minValue = data[0], maxValue = data[0];
+
+  // Znalezienie minimalnej i maksymalnej wartości
+  for (int i = 1; i < dataCount; i++) {
+    if (data[i] < minValue) minValue = data[i];
+    if (data[i] > maxValue) maxValue = data[i];
+  }
+
+  // Rysowanie osi
+  tft.drawRect(x, y, width, height, TFT_WHITE);
+
+  // Przeliczanie wartości na piksele
+  for (int i = 0; i < dataCount - 1; i++) {
+    int x0 = x + (i * (width / (dataCount - 1)));
+    int y0 = y + height - ((data[i] - minValue) / (maxValue - minValue) * height);
+    int x1 = x + ((i + 1) * (width / (dataCount - 1)));
+    int y1 = y + height - ((data[i + 1] - minValue) / (maxValue - minValue) * height);
+    
+    tft.drawLine(x0, y0, x1, y1, TFT_GREEN);
+  }
+}
+
 // Wyświetlanie szczegółów kryptowaluty
 void displayCryptoDetails(String cryptoId) {
-  String api_url = String(api_url_details_template) + cryptoId;
+  String api_url = String(api_url_details_template) + cryptoId + "/market_chart?vs_currency=usd&days=7";
   String jsonData = fetchCryptoData(api_url.c_str());
-  
-  StaticJsonDocument<1024> doc;
+
+  StaticJsonDocument<4096> doc;
   DeserializationError error = deserializeJson(doc, jsonData);
 
   if (error) {
     tft.fillScreen(TFT_BLACK);
     tft.setCursor(10, 10);
-    tft.setTextColor(RED);
+    tft.setTextColor(TFT_RED);
     tft.print("Blad JSON");
     return;
   }
 
+  // Parsowanie danych historycznych
+  const JsonArray& prices = doc["prices"];
+  float data[7];
+  for (int i = 0; i < 7; i++) {
+    data[i] = prices[i][1]; // Druga kolumna to cena
+  }
+
+  // Wyświetlenie wykresu
   tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(WHITE);
+  tft.setTextColor(TFT_WHITE);
   tft.setTextSize(2);
   tft.setCursor(10, 10);
   tft.print("Kryptowaluta: ");
@@ -73,23 +105,15 @@ void displayCryptoDetails(String cryptoId) {
 
   tft.setTextSize(1);
   tft.setCursor(10, 40);
-  tft.print("Cena: $");
-  tft.println(doc["market_data"]["current_price"]["usd"].as<float>());
+  tft.print("Wykres 7 dni");
 
-  tft.setCursor(10, 60);
-  tft.print("Zmiana 24h: ");
-  tft.println(doc["market_data"]["price_change_percentage_24h"].as<float>());
+  drawLineGraph(data, 7, 10, 60, 220, 150);
 
-  tft.setCursor(10, 80);
-  tft.print("Najwyzsza 7d: ");
-  tft.println(doc["market_data"]["high_24h"]["usd"].as<float>());
-
-  tft.setCursor(10, 100);
-  tft.print("Najnizsza 7d: ");
-  tft.println(doc["market_data"]["low_24h"]["usd"].as<float>());
-
-  // Dodaj wykres liniowy (funkcję dodamy później)
-  // drawLineGraph(data_array, 240, 150);
+  // Dodanie przycisku powrotu
+  tft.fillRect(200, 280, 40, 30, TFT_RED);
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(210, 290);
+  tft.print("Back");
 }
 
 // Obsługa dotyku
@@ -99,7 +123,6 @@ void handleTouch() {
   TS_Point p = ts.getPoint();
   int x = p.x, y = p.y;
 
-  // Skalowanie dotyku (może wymagać kalibracji)
   x = map(x, 0, 4095, 0, SCREEN_WIDTH);
   y = map(y, 0, 4095, 0, SCREEN_HEIGHT);
 
@@ -113,15 +136,12 @@ void handleTouch() {
     else if (y > 160 && y < 190) selectedCrypto = "mew";
 
     if (selectedCrypto != "") {
-      currentView = 1; // Przejście do szczegółów
+      currentView = 1;
       displayCryptoDetails(selectedCrypto);
     }
   } else if (currentView == 1) {
-    // Przycisk powrotu
     if (x > 200 && y > 280) {
       currentView = 0;
-      selectedCrypto = "";
-      // Wyświetl tabelę główną
       String data = fetchCryptoData(api_url_main);
       displayCryptoTable(data);
     }
@@ -129,7 +149,7 @@ void handleTouch() {
 }
 
 void displayCryptoTable(String jsonData) {
-  // Jak w poprzedniej wersji
+  // Funkcja tabeli pozostaje jak wcześniej
 }
 
 void setup() {
@@ -140,8 +160,9 @@ void setup() {
   ts.setRotation(1);
 
   connectToWiFi();
+
   tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(WHITE);
+  tft.setTextColor(TFT_WHITE);
   tft.setTextSize(2);
   tft.setCursor(10, 10);
   tft.print("Ladowanie danych...");
@@ -155,5 +176,5 @@ void loop() {
     }
   }
   handleTouch();
-  delay(100); // Krótka pauza dla dotyku
+  delay(100);
 }

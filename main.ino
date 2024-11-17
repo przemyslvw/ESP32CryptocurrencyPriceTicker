@@ -3,9 +3,8 @@
 #include <HTTPClient.h>       // Do obsługi API HTTP
 #include <ArduinoJson.h>      // Do przetwarzania danych JSON
 
-// Wi-Fi credentials (uzupełnij)
-const char* ssid = "Twoja_Nazwa_Sieci";
-const char* password = "Twoje_Haslo";
+// Wi-Fi credentials
+#include "WiFiConfig.h"
 
 // API settings
 const char* api_url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,dogecoin,pepe,cardano,avalanche,mew&vs_currencies=usd&include_24hr_change=true";

@@ -1,4 +1,4 @@
-#include <TFT_eSPI.h>         // Biblioteka wyświetlacza TFT
+#include <TFT_eSPI.h>         // Biblioteka wyświetlacza TFT wymaga odpowiedniej konfiguracji 
 #include <XPT2046_Touchscreen.h> // Ekran dotykowy
 #include <WiFi.h>             // Do połączenia z Wi-Fi
 #include <HTTPClient.h>       // Do obsługi API HTTP

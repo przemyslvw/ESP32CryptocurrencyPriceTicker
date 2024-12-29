@@ -1,11 +1,11 @@
-#include <TFT_eSPI.h>         // Biblioteka wyświetlacza TFT, wymaga odpowiedniej konfiguracji
+#include <TFT_eSPI.h>         // Biblioteka wyświetlacza TFT, wymaga konfiguracji w User_Setup.h
 #include <XPT2046_Touchscreen.h> // Obsługa dotykowego ekranu
 #include <WiFi.h>             // Do połączenia z Wi-Fi
 #include <HTTPClient.h>       // Do obsługi zapytań HTTP
 #include <ArduinoJson.h>      // Do przetwarzania danych JSON
 
 // Import Wi-Fi credentials z pliku "WiFiConfig.h"
-// Plik ten musi zawierać linie:
+// Plik "WiFiConfig.h" musi zawierać:
 // const char* ssid = "Twoja_Siec";
 // const char* password = "Twoje_Haslo";
 #include "WiFiConfig.h"
@@ -21,6 +21,12 @@ XPT2046_Touchscreen ts(33); // CS pin dla dotyku ustawiony na GPIO 33
 // Aktualny widok (0 = tabela, 1 = szczegóły)
 int currentView = 0;
 String selectedCrypto = ""; // ID wybranej kryptowaluty
+
+// Konfiguracja wykresu
+const int graphWidth = 220;   // Szerokość wykresu
+const int graphHeight = 150;  // Wysokość wykresu
+const int graphX = 10;        // Położenie X wykresu
+const int graphY = 60;        // Położenie Y wykresu
 
 // Funkcja inicjalizująca połączenie Wi-Fi
 void connectToWiFi() {
@@ -41,12 +47,14 @@ String fetchCryptoData(const char* url) {
     int httpResponseCode = http.GET(); // Pobieramy odpowiedź
 
     if (httpResponseCode > 0) { // Jeśli odpowiedź jest poprawna
-      return http.getString(); // Zwracamy zawartość odpowiedzi
+      String response = http.getString();
+      http.end(); // Zwalniamy zasoby HTTP
+      return response;
     } else {
       Serial.println("Błąd podczas pobierania danych z API");
+      http.end(); // Zwalniamy zasoby HTTP w przypadku błędu
       return ""; // W przypadku błędu zwracamy pusty string
     }
-    http.end(); // Kończymy zapytanie HTTP
   }
   return ""; // Jeśli Wi-Fi jest rozłączone, zwracamy pusty string
 }
@@ -110,7 +118,7 @@ void displayCryptoDetails(String cryptoId) {
   tft.setCursor(10, 40);
   tft.print("Wykres 7 dni");
 
-  drawLineGraph(data, 7, 10, 60, 220, 150);
+  drawLineGraph(data, 7, graphX, graphY, graphWidth, graphHeight);
 
   // Dodanie przycisku powrotu
   tft.fillRect(200, 280, 40, 30, TFT_RED);
@@ -124,10 +132,8 @@ void handleTouch() {
   if (!ts.touched()) return; // Jeśli ekran nie został dotknięty, nic nie robimy
 
   TS_Point p = ts.getPoint();
-  int x = p.x, y = p.y;
-
-  x = map(x, 0, 4095, 0, TFT_WIDTH);
-  y = map(y, 0, 4095, 0, TFT_HEIGHT);
+  int x = map(p.x, 0, 4095, 0, 240);
+  int y = map(p.y, 0, 4095, 0, 320);
 
   if (currentView == 0) {
     // Kliknięcie w tabeli kryptowalut
@@ -142,18 +148,39 @@ void handleTouch() {
       currentView = 1; // Przełączamy widok na szczegóły
       displayCryptoDetails(selectedCrypto);
     }
-  } else if (currentView == 1) {
-    if (x > 200 && y > 280) { // Przycisk powrotu
-      currentView = 0;
-      String data = fetchCryptoData(api_url_main);
-      displayCryptoTable(data);
-    }
+  } else if (currentView == 1 && x > 200 && y > 280) {
+    currentView = 0; // Powrót do tabeli kryptowalut
   }
 }
 
 // Funkcja wyświetlająca tabelę kryptowalut
 void displayCryptoTable(String jsonData) {
-  // Funkcja pozostaje do uzupełnienia
+  StaticJsonDocument<2048> doc;
+  DeserializationError error = deserializeJson(doc, jsonData);
+
+  if (error) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_RED);
+    tft.setCursor(10, 10);
+    tft.print("Blad danych");
+    return;
+  }
+
+  // Parsowanie i wyświetlanie danych z JSON
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(10, 10);
+  tft.print("Kryptowaluty:");
+
+  int y = 40;
+  for (String crypto : {"bitcoin", "dogecoin", "pepe", "cardano", "avalanche", "mew"}) {
+    float price = doc[crypto]["usd"];
+    float change = doc[crypto]["usd_24h_change"];
+
+    tft.setCursor(10, y);
+    tft.printf("%s: %.2f USD (%.2f%%)", crypto.c_str(), price, change);
+    y += 30;
+  }
 }
 
 // Funkcja inicjalizacyjna

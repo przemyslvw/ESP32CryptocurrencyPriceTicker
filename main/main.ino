@@ -4,86 +4,110 @@
 #include <HTTPClient.h>       // Do obsługi zapytań HTTP
 #include <ArduinoJson.h>      // Do przetwarzania danych JSON
 
-// Import Wi-Fi credentials z pliku "WiFiConfig.h"
-// Plik "WiFiConfig.h" musi zawierać:
-// const char* ssid = "Twoja_Siec";
-// const char* password = "Twoje_Haslo";
-#include "WiFiConfig.h"
+#include "WiFiConfig.h"       // Plik z Wi-Fi credentials (ssid, password)
 
-// API CoinGecko do pobierania danych o kryptowalutach
+// Konfiguracja API
 const char* api_url_main = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,dogecoin,pepe,cardano,avalanche,mew&vs_currencies=usd&include_24hr_change=true";
-const char* api_url_details_template = "https://api.coingecko.com/api/v3/coins/"; // Podstawa URL do szczegółowych danych
+const char* api_url_details_template = "https://api.coingecko.com/api/v3/coins/";
 
-// Inicjalizacja wyświetlacza TFT i ekranu dotykowego
+// Inicjalizacja TFT i dotyku
 TFT_eSPI tft = TFT_eSPI();
-XPT2046_Touchscreen ts(33); // CS pin dla dotyku ustawiony na GPIO 33
+XPT2046_Touchscreen ts(33); // CS dla dotyku ustawiony na GPIO 33
 
-// Aktualny widok (0 = tabela, 1 = szczegóły)
-int currentView = 0;
+// Aktualny widok
+int currentView = 0; // 0 = tabela, 1 = szczegóły
 String selectedCrypto = ""; // ID wybranej kryptowaluty
 
 // Konfiguracja wykresu
-const int graphWidth = 220;   // Szerokość wykresu
-const int graphHeight = 150;  // Wysokość wykresu
-const int graphX = 10;        // Położenie X wykresu
-const int graphY = 60;        // Położenie Y wykresu
+const int graphWidth = 220;
+const int graphHeight = 150;
+const int graphX = 10;
+const int graphY = 60;
 
-// Funkcja inicjalizująca połączenie Wi-Fi
+// Zmienna przechowująca status Wi-Fi
+bool isWiFiConnected = false;
+
+// Funkcja inicjalizująca Wi-Fi
 void connectToWiFi() {
   WiFi.begin(ssid, password);
-  Serial.print("Łączenie z Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
+  Serial.print("Łączenie z Wi-Fi...");
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.println(" Połączono!");
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nPołączono z Wi-Fi!");
+    isWiFiConnected = true;
+  } else {
+    Serial.println("\nNie udało się połączyć z Wi-Fi.");
+    isWiFiConnected = false;
+  }
 }
 
 // Pobieranie danych z API
 String fetchCryptoData(const char* url) {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    http.begin(url); // Rozpoczynamy zapytanie HTTP do podanego URL
-    int httpResponseCode = http.GET(); // Pobieramy odpowiedź
-
-    if (httpResponseCode > 0) { // Jeśli odpowiedź jest poprawna
-      String response = http.getString();
-      http.end(); // Zwalniamy zasoby HTTP
-      return response;
-    } else {
-      Serial.println("Błąd podczas pobierania danych z API");
-      http.end(); // Zwalniamy zasoby HTTP w przypadku błędu
-      return ""; // W przypadku błędu zwracamy pusty string
-    }
-  }
-  return ""; // Jeśli Wi-Fi jest rozłączone, zwracamy pusty string
-}
-
-// Funkcja rysująca wykres liniowy
-void drawLineGraph(float data[], int dataCount, int x, int y, int width, int height) {
-  float minValue = data[0], maxValue = data[0];
-
-  // Znalezienie minimalnej i maksymalnej wartości w danych
-  for (int i = 1; i < dataCount; i++) {
-    if (data[i] < minValue) minValue = data[i];
-    if (data[i] > maxValue) maxValue = data[i];
+  if (!isWiFiConnected) {
+    Serial.println("Wi-Fi rozłączone. Brak możliwości pobrania danych.");
+    return "";
   }
 
-  // Rysowanie ramki wykresu
-  tft.drawRect(x, y, width, height, TFT_WHITE);
+  HTTPClient http;
+  http.begin(url);
+  int httpResponseCode = http.GET();
 
-  // Rysowanie linii wykresu
-  for (int i = 0; i < dataCount - 1; i++) {
-    int x0 = x + (i * (width / (dataCount - 1)));
-    int y0 = y + height - ((data[i] - minValue) / (maxValue - minValue) * height);
-    int x1 = x + ((i + 1) * (width / (dataCount - 1)));
-    int y1 = y + height - ((data[i + 1] - minValue) / (maxValue - minValue) * height);
-    
-    tft.drawLine(x0, y0, x1, y1, TFT_GREEN); // Zielona linia dla danych
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    http.end(); // Zwalniamy zasoby
+    return response;
+  } else {
+    Serial.printf("Błąd HTTP: %d\n", httpResponseCode);
+    http.end(); // Zwalniamy zasoby
+    return "";
   }
 }
 
-// Wyświetlanie szczegółów kryptowaluty
+// Wyświetlanie tabeli kryptowalut
+void displayCryptoTable(String jsonData) {
+  StaticJsonDocument<2048> doc;
+  DeserializationError error = deserializeJson(doc, jsonData);
+
+  if (error) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_RED);
+    tft.setCursor(10, 10);
+    tft.print("Błąd danych JSON");
+    return;
+  }
+
+  // Wyświetlenie nagłówka
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE);
+  tft.setCursor(10, 10);
+  tft.print("Tabela kryptowalut:");
+
+  // Wyświetlenie listy kryptowalut
+  int y = 40;
+  for (String crypto : {"bitcoin", "dogecoin", "pepe", "cardano", "avalanche", "mew"}) {
+    float price = doc[crypto]["usd"];
+    float change = doc[crypto]["usd_24h_change"];
+
+    tft.setCursor(10, y);
+    tft.printf("%s: %.2f USD", crypto.c_str(), price);
+
+    // Zmiana koloru dla wzrostu/spadku
+    if (change >= 0) tft.setTextColor(TFT_GREEN);
+    else tft.setTextColor(TFT_RED);
+
+    tft.printf(" (%.2f%%)", change);
+    tft.setTextColor(TFT_WHITE);
+    y += 30; // Odstęp między liniami
+  }
+}
+
+// Wyświetlenie szczegółów kryptowaluty
 void displayCryptoDetails(String cryptoId) {
   String api_url = String(api_url_details_template) + cryptoId + "/market_chart?vs_currency=usd&days=7";
   String jsonData = fetchCryptoData(api_url.c_str());
@@ -91,7 +115,7 @@ void displayCryptoDetails(String cryptoId) {
   StaticJsonDocument<4096> doc;
   DeserializationError error = deserializeJson(doc, jsonData);
 
-  if (error) { // Jeśli wystąpił błąd parsowania JSON
+  if (error) {
     tft.fillScreen(TFT_BLACK);
     tft.setCursor(10, 10);
     tft.setTextColor(TFT_RED);
@@ -99,14 +123,13 @@ void displayCryptoDetails(String cryptoId) {
     return;
   }
 
-  // Parsowanie danych historycznych
+  // Wyświetlenie wykresu
   const JsonArray& prices = doc["prices"];
   float data[7];
   for (int i = 0; i < 7; i++) {
-    data[i] = prices[i][1]; // Druga kolumna zawiera cenę
+    data[i] = prices[i][1];
   }
 
-  // Wyświetlenie wykresu
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_WHITE);
   tft.setTextSize(2);
@@ -120,70 +143,55 @@ void displayCryptoDetails(String cryptoId) {
 
   drawLineGraph(data, 7, graphX, graphY, graphWidth, graphHeight);
 
-  // Dodanie przycisku powrotu
+  // Przycisk powrotu
   tft.fillRect(200, 280, 40, 30, TFT_RED);
   tft.setTextColor(TFT_WHITE);
   tft.setCursor(210, 290);
   tft.print("Back");
 }
 
+// Funkcja rysująca wykres
+void drawLineGraph(float data[], int dataCount, int x, int y, int width, int height) {
+  float minValue = data[0], maxValue = data[0];
+
+  for (int i = 1; i < dataCount; i++) {
+    if (data[i] < minValue) minValue = data[i];
+    if (data[i] > maxValue) maxValue = data[i];
+  }
+
+  tft.drawRect(x, y, width, height, TFT_WHITE);
+
+  for (int i = 0; i < dataCount - 1; i++) {
+    int x0 = x + (i * (width / (dataCount - 1)));
+    int y0 = y + height - ((data[i] - minValue) / (maxValue - minValue) * height);
+    int x1 = x + ((i + 1) * (width / (dataCount - 1)));
+    int y1 = y + height - ((data[i + 1] - minValue) / (maxValue - minValue) * height);
+    
+    tft.drawLine(x0, y0, x1, y1, TFT_GREEN);
+  }
+}
+
 // Obsługa dotyku
 void handleTouch() {
-  if (!ts.touched()) return; // Jeśli ekran nie został dotknięty, nic nie robimy
+  if (!ts.touched()) return;
 
   TS_Point p = ts.getPoint();
   int x = map(p.x, 0, 4095, 0, 240);
   int y = map(p.y, 0, 4095, 0, 320);
 
   if (currentView == 0) {
-    // Kliknięcie w tabeli kryptowalut
-    if (y > 10 && y < 40) selectedCrypto = "bitcoin";
-    else if (y > 40 && y < 70) selectedCrypto = "dogecoin";
-    else if (y > 70 && y < 100) selectedCrypto = "pepe";
-    else if (y > 100 && y < 130) selectedCrypto = "cardano";
-    else if (y > 130 && y < 160) selectedCrypto = "avalanche";
-    else if (y > 160 && y < 190) selectedCrypto = "mew";
-
-    if (selectedCrypto != "") {
-      currentView = 1; // Przełączamy widok na szczegóły
+    if (y > 40 && y < 190) {
+      selectedCrypto = y < 70 ? "bitcoin" : y < 100 ? "dogecoin" : y < 130 ? "pepe" :
+                       y < 160 ? "cardano" : y < 190 ? "avalanche" : "mew";
+      currentView = 1;
       displayCryptoDetails(selectedCrypto);
     }
   } else if (currentView == 1 && x > 200 && y > 280) {
-    currentView = 0; // Powrót do tabeli kryptowalut
+    currentView = 0;
   }
 }
 
-// Funkcja wyświetlająca tabelę kryptowalut
-void displayCryptoTable(String jsonData) {
-  StaticJsonDocument<2048> doc;
-  DeserializationError error = deserializeJson(doc, jsonData);
-
-  if (error) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_RED);
-    tft.setCursor(10, 10);
-    tft.print("Blad danych");
-    return;
-  }
-
-  // Parsowanie i wyświetlanie danych z JSON
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_WHITE);
-  tft.setCursor(10, 10);
-  tft.print("Kryptowaluty:");
-
-  int y = 40;
-  for (String crypto : {"bitcoin", "dogecoin", "pepe", "cardano", "avalanche", "mew"}) {
-    float price = doc[crypto]["usd"];
-    float change = doc[crypto]["usd_24h_change"];
-
-    tft.setCursor(10, y);
-    tft.printf("%s: %.2f USD (%.2f%%)", crypto.c_str(), price, change);
-    y += 30;
-  }
-}
-
-// Funkcja inicjalizacyjna
+// Setup
 void setup() {
   Serial.begin(115200);
   tft.init();
